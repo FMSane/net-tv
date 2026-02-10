@@ -1,1 +1,8 @@
 /* You can add global styles to this file, and also import other style files */
+@import "tailwindcss";
+
+:focus {
+    outline: 4px solid #3b82f6; /* Un borde azul brillante para saber donde estás */
+    outline-offset: 2px;
+}
+html, body { background-color: #0f172a; color: white; overflow: hidden; }

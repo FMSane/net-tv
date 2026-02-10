@@ -1,0 +1,7 @@
+{
+  "version": "1.0.2",
+  "build": 102,
+  "url": "https://github.com/TU_USUARIO/TU_PROYECTO/releases/download/v1.0.2/app-release.apk",
+  "forceUpdate": false,
+  "changelog": "Agregamos favoritos y arreglamos el buscador."
+}

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NetTv</string>
+    <string name="title_activity_main">NetTv</string>
+    <string name="package_name">com.nettv.app</string>
+    <string name="custom_url_scheme">com.nettv.app</string>
+</resources>
