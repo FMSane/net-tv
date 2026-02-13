@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
 import { BehaviorSubject, Observable, map, of, tap } from 'rxjs';
+import { environment} from '../../environments/environment';
 
 // --- 1. INTERFACES DEL BACKEND (Exactas a Go) ---
 export interface Source {
@@ -54,7 +55,7 @@ export interface MediaItem {
 
 @Injectable({ providedIn: 'root' })
 export class DataService {
-  private apiUrl = 'https://net-tv-back.onrender.com/api';
+  private apiUrl = environment.apiUrl;
 
   // Observables de estado
   public favChannels$ = new BehaviorSubject<MediaItem[]>([]);
