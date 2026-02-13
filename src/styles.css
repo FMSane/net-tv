@@ -2,7 +2,38 @@
 @import "tailwindcss";
 
 :focus {
-    outline: 4px solid #3b82f6; /* Un borde azul brillante para saber donde estás */
-    outline-offset: 2px;
+  outline: none;
+  transform: scale(1.05);
+  box-shadow: 0 0 20px rgba(220, 38, 38, 0.8); /* Glow rojo */
+  z-index: 50;
+  transition: all 0.2s ease-in-out;
 }
-html, body { background-color: #0f172a; color: white; overflow: hidden; }
+
+html, body { 
+    background-color: #0f172a; 
+    color: white; 
+    overflow: hidden; 
+}
+
+/* Ocultar scrollbars que distraen en TV */
+::-webkit-scrollbar {
+  display: none;
+}
+
+/* ARREGLO DE ÍCONOS */
+.material-icons {
+    /* Quita el comportamiento de texto */
+    display: inline-flex !important; 
+    align-items: center;
+    justify-content: center;
+    
+    /* Elimina la altura de línea que agrega espacio abajo */
+    line-height: 1 !important; 
+    
+    /* Alineación vertical perfecta */
+    vertical-align: middle;
+    
+    /* Prevenir selección de texto accidental */
+    user-select: none;
+}
+

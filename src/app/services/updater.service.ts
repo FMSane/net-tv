@@ -4,6 +4,7 @@ import { App } from '@capacitor/app';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { FileOpener } from '@capacitor-community/file-opener';
 import { BehaviorSubject } from 'rxjs';
+import { Capacitor } from '@capacitor/core';
 
 export interface UpdateInfo {
   version: string;
@@ -14,7 +15,7 @@ export interface UpdateInfo {
 @Injectable({ providedIn: 'root' })
 export class UpdaterService {
   // Cambia esto por tu URL real de GitHub RAW
-  private updateUrl = 'https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/version.json';
+  private updateUrl = 'https://raw.githubusercontent.com/FMSane/net-tv/refs/heads/main/version.json';
 
   // Observable: Aquí avisaremos si hay actualización
   public updateAvailable$ = new BehaviorSubject<UpdateInfo | null>(null);
@@ -22,6 +23,13 @@ export class UpdaterService {
   constructor(private http: HttpClient) {}
 
   async checkForUpdate() {
+
+    // SI NO ES NATIVO (Es web), NO HAGAS NADA
+    if (!Capacitor.isNativePlatform()) {
+      console.log('Modo Web detectado: Updater desactivado.');
+      return;
+    }
+
     try {
       const appInfo = await App.getInfo();
       const currentVersion = appInfo.version; // Ej: "1.0.0"

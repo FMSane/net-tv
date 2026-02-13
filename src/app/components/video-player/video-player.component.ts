@@ -1,107 +1,216 @@
-import { Component, ElementRef, ViewChild, Input, OnChanges, SimpleChanges } from '@angular/core';
+import { Component, ElementRef, ViewChild, Input, OnChanges, SimpleChanges, OnDestroy, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DomSanitizer, SafeResourceUrl } from '@angular/platform-browser';
+import { Source } from '../../services/data.service';
+import { App } from '@capacitor/app';
+import shaka from 'shaka-player';
 
 @Component({
   selector: 'app-video-player',
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div
+    <div 
       #videoContainer
-      class="relative w-full h-full bg-black rounded-xl overflow-hidden group outline-none transition-all"
-      [class.focus-ring]="isFocused"
+      class="relative w-full h-full bg-black rounded-xl overflow-hidden group outline-none focus:ring-4 focus:ring-red-600 focus:z-40"
       tabindex="0"
-      (focus)="isFocused = true"
-      (blur)="isFocused = false"
-      (keydown.enter)="toggleFullScreen()"
-      (click)="toggleFullScreen()">
+      (keydown.enter)="enterFullScreen()"
+      (click)="enterFullScreen()">
 
-      <ng-container *ngIf="safeUrl; else emptyState">
-        <iframe
-          [src]="safeUrl"
-          class="w-full h-full border-0"
-          allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
-          sandbox="allow-scripts allow-same-origin allow-presentation"
-          loading="lazy">
-        </iframe>
+      <iframe 
+        *ngIf="isIframe && safeUrl"
+        [src]="safeUrl" 
+        class="w-full h-full border-0 block relative z-10" 
+        style="pointer-events: auto;"
+        tabindex="-1"
+        allow="autoplay; encrypted-media; fullscreen; picture-in-picture"
+        allowfullscreen>
+      </iframe>
 
-        <div class="absolute inset-0 z-10 bg-transparent cursor-pointer"></div>
-      </ng-container>
+      <video 
+        #videoElement
+        *ngIf="!isIframe"
+        class="w-full h-full pointer-events-none bg-black relative z-10" 
+        tabindex="-1"
+        playsinline
+        (play)="isPlaying = true"
+        (pause)="isPlaying = false"
+        (waiting)="isLoading = true"
+        (playing)="isLoading = false">
+      </video>
 
-      <ng-template #emptyState>
-        <div class="flex flex-col items-center justify-center h-full text-gray-500">
-           <i class="material-icons text-6xl mb-2">tv_off</i>
-           <p>Cargando señal...</p>
+      <button 
+        #controlsButton
+        *ngIf="isFullscreenMode && !isIframe"
+        class="absolute inset-0 w-full h-full z-50 bg-transparent outline-none border-none cursor-default"
+        tabindex="0"
+        (click)="togglePlay()"
+        (keydown.enter)="togglePlay()"
+        (keydown.space)="togglePlay()">
+        
+        <div *ngIf="!isPlaying" class="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div class="bg-black/60 rounded-full p-6 animate-pulse">
+                <i class="material-icons text-6xl text-white">play_arrow</i>
+            </div>
         </div>
-      </ng-template>
+      </button>
 
+      <div *ngIf="isLoading" class="absolute inset-0 flex items-center justify-center bg-black/20 z-20 pointer-events-none">
+          <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-red-600"></div>
+      </div>
+
+      <div *ngIf="!safeUrl && !hasNativeSource && !isLoading" class="absolute inset-0 flex flex-col items-center justify-center text-gray-500 z-0 pointer-events-none">
+         <i class="material-icons text-6xl mb-2 opacity-50">tv_off</i>
+         <p>Cargando señal...</p>
+      </div>
     </div>
   `,
-  styles: [`
-    /* Estilo visual para cuando el foco está en el video */
-    .focus-ring {
-      box-shadow: 0 0 0 4px #dc2626; /* Anillo rojo de Tailwind (red-600) */
-      z-index: 20;
-    }
-  `]
+  styles: [`:host { display: block; width: 100%; height: 100%; }`]
 })
-export class VideoPlayerComponent implements OnChanges {
-  @Input() channelId: string | number = '';
-
+export class VideoPlayerComponent implements OnChanges, OnDestroy, AfterViewInit {
+  @Input() source: Source | undefined;
+  
   @ViewChild('videoContainer') videoContainer!: ElementRef;
+  @ViewChild('videoElement') videoElement!: ElementRef<HTMLVideoElement>;
+  @ViewChild('controlsButton') controlsButton!: ElementRef;
 
   safeUrl: SafeResourceUrl | null = null;
-  isFocused = false;
-  isFullScreen = false;
-
-  // URL Base del proveedor externo
-  private baseUrl = 'https://www.nebunexa.life/cvatt.html';
+  
+  isIframe = true;
+  hasNativeSource = false;
+  isPlaying = false;
+  isLoading = false;
+  isFullscreenMode = false;
+  
+  private player: shaka.Player | null = null;
 
   constructor(private sanitizer: DomSanitizer) {}
 
+  ngAfterViewInit() { 
+      shaka.polyfill.installAll();
+      App.addListener('backButton', () => {
+        if (document.fullscreenElement || this.isFullscreenMode) {
+            this.exitFullScreen();
+        }
+      });
+
+      // Gestiona el foco al entrar/salir de pantalla completa
+      document.addEventListener('fullscreenchange', () => {
+          this.isFullscreenMode = !!document.fullscreenElement;
+          
+          if (this.isFullscreenMode && !this.isIframe) {
+              setTimeout(() => {
+                  if (this.controlsButton) this.controlsButton.nativeElement.focus();
+              }, 100);
+          } else {
+              setTimeout(() => this.focusContainer(), 100);
+          }
+      });
+  }
+
   ngOnChanges(changes: SimpleChanges) {
-    if (changes['channelId'] && this.channelId) {
-      this.generateUrl(this.channelId.toString());
+    if (changes['source'] && this.source) {
+      this.loadSource(this.source);
     }
   }
 
-  private generateUrl(id: string) {
-    // 1. Codificar en Base64 si no lo está (el sitio externo lo requiere)
-    const encodedId = this.isBase64(id) ? id : btoa(id);
-
-    // 2. Construir URL con autoplay forzado
-    const fullUrl = `${this.baseUrl}?get=${encodedId}&lang=1&start=true`;
-
-    // 3. Sanitizar para que Angular confíe en la URL
-    this.safeUrl = this.sanitizer.bypassSecurityTrustResourceUrl(fullUrl);
+  public focusContainer() {
+      // 1. Si estamos en Fullscreen y es un video nativo, forzamos el foco al botón invisible
+      if (this.isFullscreenMode && !this.isIframe && this.controlsButton) {
+          this.controlsButton.nativeElement.focus();
+      } 
+      // 2. Si es Iframe o estamos en modo ventana, forzamos el foco al contenedor principal
+      else if (this.videoContainer) {
+          this.videoContainer.nativeElement.focus();
+      }
   }
 
-  toggleFullScreen() {
+  enterFullScreen() {
     const elem = this.videoContainer.nativeElement;
+    if (elem.requestFullscreen) {
+        // Usamos .then() para saber exactamente cuándo terminó la animación de pantalla completa
+        elem.requestFullscreen().then(() => {
+            this.isFullscreenMode = true; // Forzamos el estado por seguridad
+            
+            // Le damos 100ms al DOM para que se asiente y disparamos el foco
+            setTimeout(() => {
+                this.focusContainer();
+            }, 100);
+            
+        }).catch((err: any) => console.log("Error fullscreen:", err));
+    }
+  }
 
-    if (!document.fullscreenElement) {
-      // Entrar en pantalla completa
-      if (elem.requestFullscreen) {
-        elem.requestFullscreen();
-      } else if (elem.webkitRequestFullscreen) { /* Safari/Old Chrome */
-        elem.webkitRequestFullscreen();
-      }
-      this.isFullScreen = true;
+  exitFullScreen() {
+    if (document.exitFullscreen) {
+        document.exitFullscreen().catch((err: any) => console.log(err));
+    }
+  }
+
+  togglePlay() {
+    if (this.isIframe) return;
+    const video = this.videoElement?.nativeElement;
+    if (video) {
+        video.paused ? video.play() : video.pause();
+    }
+  }
+
+  private async loadSource(src: Source) {
+    this.destroyPlayer();
+    this.isLoading = true;
+    this.isFullscreenMode = false;
+
+    if (src.type === 'dash' || src.url.endsWith('.mpd')) {
+      this.isIframe = false;
+      this.hasNativeSource = true;
+      setTimeout(() => this.initShakaPlayer(src), 50);
     } else {
-      // Salir de pantalla completa
-      if (document.exitFullscreen) {
-        document.exitFullscreen();
-      }
-      this.isFullScreen = false;
+      this.isIframe = true;
+      this.hasNativeSource = false;
+      
+      let finalUrl = src.url;
+      const separator = finalUrl.includes('?') ? '&' : '?';
+      if (!finalUrl.includes('autoplay=')) finalUrl += `${separator}autoplay=1`;
+      
+      // YA NO NECESITAMOS FORZAR EL MUTED=1 GRACIAS A TU MAINACTIVITY.JAVA
+      this.safeUrl = this.sanitizer.bypassSecurityTrustResourceUrl(finalUrl);
+      this.isLoading = false;
     }
   }
 
-  private isBase64(str: string) {
+  private async initShakaPlayer(src: Source) {
+    if (!this.videoElement) return;
+    const video = this.videoElement.nativeElement;
+    this.player = new shaka.Player(video);
+    this.player.addEventListener('error', () => {});
+    
+    const drmData = (src as any).drm; 
+    if (drmData && drmData.clearkey) {
+      this.player.configure({ drm: { clearKeys: { [drmData.clearkey.keyId]: drmData.clearkey.key } } });
+    }
+
     try {
-      return btoa(atob(str)) === str;
-    } catch (err) {
-      return false;
+      await this.player.load(src.url);
+      
+      // INICIA AUTOMÁTICAMENTE CON SONIDO
+      video.muted = false; 
+      await video.play();
+      
+    } catch (e) {
+      console.error(e);
+    } finally {
+        this.isLoading = false;
     }
   }
+
+  private async destroyPlayer() {
+    if (this.player) {
+      await this.player.destroy();
+      this.player = null;
+    }
+    this.safeUrl = null;
+    this.isPlaying = false;
+  }
+
+  ngOnDestroy() { this.destroyPlayer(); }
 }

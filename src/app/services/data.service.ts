@@ -1,57 +1,146 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, of } from 'rxjs';
+import { HttpClient } from '@angular/common/http';
+import { BehaviorSubject, Observable, map, of, tap } from 'rxjs';
 
+// --- 1. INTERFACES DEL BACKEND (Exactas a Go) ---
+export interface Source {
+  name: string;
+  url: string;
+  type: string; // "iframe", "m3u8", "dash"
+  priority: number;
+  headers?: { [key: string]: string };
+  drm?: {
+    clearkey?: {
+      keyId: string;
+      key: string;
+    }
+  };
+}
+
+export interface Channel {
+  id?: string;      // Mongo ID
+  name: string;
+  category: string;
+  logo: string;
+  sources: Source[];
+  last_updated?: string;
+}
+
+export interface SportEvent {
+  title: string;
+  time: string;
+  league: string;
+  image?: string;
+  channels: {
+    name: string;
+    url: string;
+    type: string;
+    drm?: any;
+    is_external: boolean;
+  }[];
+}
+
+// --- 2. INTERFAZ GENÉRICA PARA LA UI (Cards, Library, Gallery) ---
 export interface MediaItem {
-  id: string | number;
+  id: string;
   title: string;
   image: string;
-  description?: string;
-  type: 'movie' | 'series' | 'channel'; // Importante para diferenciar
+  type: 'movie' | 'series' | 'channel';
   category: string;
-  videoUrl?: string;
+  description?: string;
+  // Guardamos el objeto original para cuando necesitemos los sources
+  originalData?: Channel | any; 
 }
 
 @Injectable({ providedIn: 'root' })
 export class DataService {
-  // --- CLAVES DE LOCAL STORAGE ---
-  private readonly KEYS = {
-    HISTORY: 'tv_app_history',
-    FAV_CHANNELS: 'tv_app_fav_channels',      // Canales (Estrella en Home)
-    WATCHLIST_MOVIES: 'tv_app_watchlist_movies', // Para la biblioteca
-    WATCHLIST_SERIES: 'tv_app_watchlist_series'  // Para la biblioteca
-  };
+  private apiUrl = 'https://net-tv-back.onrender.com/api';
 
-  // --- OBSERVABLES (Para que la UI se actualice sola) ---
-  public history$ = new BehaviorSubject<MediaItem[]>([]);
+  // Observables de estado
   public favChannels$ = new BehaviorSubject<MediaItem[]>([]);
+  public history$ = new BehaviorSubject<MediaItem[]>([]);
   public watchlistMovies$ = new BehaviorSubject<MediaItem[]>([]);
   public watchlistSeries$ = new BehaviorSubject<MediaItem[]>([]);
 
-  // --- DATOS MOCK (Tu generador actual) ---
-  private mockData: MediaItem[] = Array.from({ length: 50 }).map((_, i) => ({
-    id: i,
-    title: `Canal / Título ${i + 1}`,
-    image: `https://picsum.photos/300/450?random=${i}`,
-    // Asignamos tipos variados para probar
-    type: i % 3 === 0 ? 'series' : (i % 2 === 0 ? 'movie' : 'channel'),
-    category: ['Acción', 'Drama', 'Comedia', 'Deportes'][i % 4],
-    description: 'Descripción simulada del programa o canal...',
-    videoUrl: 'https://www.w3schools.com/html/mov_bbb.mp4'
-  }));
+  private readonly KEYS = {
+    HISTORY: 'tv_app_history',
+    FAV_CHANNELS: 'tv_app_fav_channels',
+    LAST_CHANNEL: 'tv_app_last_viewed',
+    WATCHLIST_MOVIES: 'tv_app_watchlist_movies',
+    WATCHLIST_SERIES: 'tv_app_watchlist_series'
+  };
 
-  constructor() {
-    this.loadAll();
+  constructor(private http: HttpClient) {
+    this.loadLocalData();
   }
 
-  // Carga inicial de todo el storage
-  private loadAll() {
-    this.history$.next(this.load(this.KEYS.HISTORY));
+  saveLastChannel(item: MediaItem) {
+    localStorage.setItem(this.KEYS.LAST_CHANNEL, JSON.stringify(item));
+  }
+
+  getLastChannel(): MediaItem | null {
+    const data = localStorage.getItem(this.KEYS.LAST_CHANNEL);
+    return data ? JSON.parse(data) : null;
+  }
+
+  getChannels(): Observable<MediaItem[]> {
+    return this.http.get<Channel[]>(`${this.apiUrl}/tv/channels`).pipe(
+      map(channels => {
+        const mapped = channels.map(c => ({
+          id: c.name,
+          title: c.name,
+          image: c.logo || 'assets/no-logo.png',
+          type: 'channel',
+          category: c.category || 'General',
+          originalData: c
+        } as MediaItem));
+
+        // ORDENAR: Favoritos arriba, luego el resto
+        const favIds = this.favChannels$.value.map(f => f.id);
+        return mapped.sort((a, b) => {
+          const aIsFav = favIds.includes(a.id);
+          const bIsFav = favIds.includes(b.id);
+          if (aIsFav && !bIsFav) return -1;
+          if (!aIsFav && bIsFav) return 1;
+          return a.title.localeCompare(b.title);
+        });
+      })
+    );
+  }
+
+  // El buscador ahora es funcional con la API
+  search(query: string): Observable<MediaItem[]> {
+    return this.getChannels().pipe(
+      map(items => items.filter(i => 
+        i.title.toLowerCase().includes(query.toLowerCase()) || 
+        i.category.toLowerCase().includes(query.toLowerCase())
+      ))
+    );
+  }
+
+  // Obtiene la agenda deportiva (No se mapea a MediaItem, se usa directo)
+  getAgenda(): Observable<SportEvent[]> {
+    return this.http.get<SportEvent[]>(`${this.apiUrl}/agenda`);
+  }
+
+  // --- MÉTODOS DE SOPORTE PARA UI ---
+  
+  getFeatured() { return this.getChannels(); } // Por ahora featured = canales
+  
+  // Mocks vacíos para Movies/Series hasta que hagas ese backend
+  getMovies() { return of([] as MediaItem[]); }
+  getSeries() { return of([] as MediaItem[]); }
+
+
+  // --- LOCAL STORAGE & GESTIÓN DE LISTAS ---
+
+  private loadLocalData() {
     this.favChannels$.next(this.load(this.KEYS.FAV_CHANNELS));
+    this.history$.next(this.load(this.KEYS.HISTORY));
     this.watchlistMovies$.next(this.load(this.KEYS.WATCHLIST_MOVIES));
     this.watchlistSeries$.next(this.load(this.KEYS.WATCHLIST_SERIES));
   }
 
-  // --- MÉTODOS DE LECTURA/ESCRITURA GENÉRICOS ---
   private load(key: string): MediaItem[] {
     const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : [];
@@ -59,58 +148,32 @@ export class DataService {
 
   private save(key: string, data: MediaItem[]) {
     localStorage.setItem(key, JSON.stringify(data));
-    // Actualizar el Subject correspondiente
     switch(key) {
-      case this.KEYS.HISTORY: this.history$.next(data); break;
       case this.KEYS.FAV_CHANNELS: this.favChannels$.next(data); break;
-      case this.KEYS.WATCHLIST_MOVIES: this.watchlistMovies$.next(data); break;
-      case this.KEYS.WATCHLIST_SERIES: this.watchlistSeries$.next(data); break;
+      case this.KEYS.HISTORY: this.history$.next(data); break;
+      // ... otros casos
     }
   }
 
-  // --- MÉTODOS PÚBLICOS ---
-
-  getFeatured() { return of(this.mockData); }
-  getMovies() { return of(this.mockData.filter(x => x.type === 'movie')); }
-  getSeries() { return of(this.mockData.filter(x => x.type === 'series')); }
-
-  // 1. Historial
-  addToHistory(item: MediaItem) {
-    let list = this.load(this.KEYS.HISTORY);
-    list = list.filter(i => i.id !== item.id); // Evitar duplicados
-    list.unshift(item); // Poner al inicio
-    if (list.length > 50) list.pop(); // Limite
-    this.save(this.KEYS.HISTORY, list);
-  }
-
-  // 2. Canales Favoritos (Home)
   toggleFavChannel(item: MediaItem) {
     let list = this.load(this.KEYS.FAV_CHANNELS);
-    const exists = list.find(i => i.id === item.id);
-    if (exists) {
-      list = list.filter(i => i.id !== item.id); // Borrar
+    if (list.find(i => i.id === item.id)) {
+      list = list.filter(i => i.id !== item.id);
     } else {
-      list.push(item); // Agregar
+      list.push(item);
     }
     this.save(this.KEYS.FAV_CHANNELS, list);
   }
 
-  isFavChannel(id: string | number): boolean {
+  isFavChannel(id: string): boolean {
     return this.favChannels$.value.some(i => i.id === id);
   }
 
-  // 3. Biblioteca (Movies/Series)
-  toggleWatchlist(item: MediaItem) {
-    const key = item.type === 'movie' ? this.KEYS.WATCHLIST_MOVIES : this.KEYS.WATCHLIST_SERIES;
-    let list = this.load(key);
-    const exists = list.find(i => i.id === item.id);
-    if (exists) list = list.filter(i => i.id !== item.id);
-    else list.push(item);
-    this.save(key, list);
-  }
-
-  search(query: string) {
-    const q = query.toLowerCase();
-    return of(this.mockData.filter(x => x.title.toLowerCase().includes(q)));
+  addToHistory(item: MediaItem) {
+    let list = this.load(this.KEYS.HISTORY);
+    list = list.filter(i => i.id !== item.id);
+    list.unshift(item);
+    if (list.length > 50) list.pop();
+    this.save(this.KEYS.HISTORY, list);
   }
 }

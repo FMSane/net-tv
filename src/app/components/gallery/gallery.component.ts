@@ -1,8 +1,10 @@
-import { Component, OnInit, Input } from '@angular/core';
+// src/app/pages/gallery/gallery.component.ts
+
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { DataService, MediaItem } from '../../services/data.service';
 import { PosterCardComponent } from '../poster-card/poster-card.component';
-import { ActivatedRoute } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router'; // Importar Router
 
 @Component({
   selector: 'app-gallery',
@@ -20,7 +22,8 @@ import { ActivatedRoute } from '@angular/router';
             *ngFor="let item of cat.items"
             [item]="item"
             (click)="selectItem(item)"
-            (keydown.enter)="selectItem(item)">
+            (keydown.enter)="selectItem(item)"
+            tabindex="0">
           </app-poster-card>
         </div>
       </div>
@@ -35,13 +38,16 @@ export class GalleryComponent implements OnInit {
   title = 'Explorar';
   categories: { name: string, items: MediaItem[] }[] = [];
 
-  constructor(private dataService: DataService, private route: ActivatedRoute) {}
+  constructor(
+      private dataService: DataService, 
+      private route: ActivatedRoute,
+      private router: Router
+  ) {}
 
   ngOnInit() {
-    // Determinar qué datos cargar según la URL
     const path = this.route.snapshot.url[0]?.path;
-
     let dataObs;
+
     if (path === 'movies') {
       this.title = 'Películas';
       dataObs = this.dataService.getMovies();
@@ -49,22 +55,45 @@ export class GalleryComponent implements OnInit {
       this.title = 'Series de TV';
       dataObs = this.dataService.getSeries();
     } else {
-      this.title = 'Tendencias';
-      dataObs = this.dataService.getFeatured();
+      // AQUÍ ES DONDE IBA LO QUE PREGUNTABAS
+      this.title = 'Canales en Vivo';
+      // Obtenemos todos los canales desde Render
+      dataObs = this.dataService.getChannels();
     }
 
     dataObs.subscribe(data => {
-      // Agrupar por categorías simuladas
-      const cats = ['Acción', 'Drama', 'Comedia', 'Suspenso'];
-      this.categories = cats.map(c => ({
-        name: c,
-        items: data.filter(d => d.category === c || Math.random() > 0.5).slice(0, 10) // Mock logic
-      }));
+      // Si estamos en la vista de Canales, los agrupamos por su categoría real
+      if (path !== 'movies' && path !== 'series') {
+          // Extraemos categorías únicas de los datos reales
+          const uniqueCats = [...new Set(data.map(d => d.category))];
+          
+          this.categories = uniqueCats.map(categoryName => ({
+              name: categoryName,
+              items: data.filter(d => d.category === categoryName)
+          }));
+          
+          // Ordenamos categorías alfabéticamente
+          this.categories.sort((a, b) => a.name.localeCompare(b.name));
+
+      } else {
+          // Lógica mock para pelis/series (por ahora)
+          const cats = ['Acción', 'Drama', 'Comedia', 'Suspenso'];
+          this.categories = cats.map(c => ({
+            name: c,
+            items: data.filter(d => d.category === c || Math.random() > 0.5).slice(0, 10)
+          }));
+      }
     });
   }
 
   selectItem(item: MediaItem) {
-    console.log('Ir al detalle o reproducir:', item);
-    // Aquí podrías navegar al Home y pasarle el ID
+    // Si es un canal, vamos al Home a reproducirlo
+    if (item.type === 'channel') {
+        // Guardamos como último visto para que el Home lo tome
+        this.dataService.saveLastChannel(item);
+        this.router.navigate(['/home']);
+    } else {
+        console.log('Reproducir peli/serie:', item);
+    }
   }
 }
