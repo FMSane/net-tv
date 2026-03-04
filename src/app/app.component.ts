@@ -1,5 +1,5 @@
-import { Component, NgZone, OnInit } from '@angular/core';
-import { CommonModule, Location } from '@angular/common'; // <--- AGREGADO Location AQUÍ
+import { Component, NgZone, OnInit, OnDestroy, HostListener } from '@angular/core';
+import { CommonModule, Location } from '@angular/common';
 import { Router, RouterModule } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 
@@ -29,7 +29,6 @@ import { App } from '@capacitor/app';
       <app-sidebar class="flex-shrink-0 h-full z-50"></app-sidebar>
 
       <div class="flex-1 flex flex-col h-full relative min-w-0">
-        
         <app-header 
           (openSearch)="openSearch()" 
           (openLibrary)="openLibrary()">
@@ -38,7 +37,6 @@ import { App } from '@capacitor/app';
         <div class="flex-1 overflow-hidden relative">
            <router-outlet></router-outlet>
         </div>
-
       </div>
 
       <div *ngIf="showExitToast" 
@@ -65,6 +63,11 @@ import { App } from '@capacitor/app';
       <app-library *ngIf="showLibrary" (close)="showLibrary = false"></app-library>
       <app-update-modal *ngIf="updateInfo" [updateInfo]="updateInfo" (confirm)="onInstallUpdate()" (cancel)="updateInfo = null"></app-update-modal>
 
+      <div id="virtual-cursor"
+           class="pointer-events-none fixed z-[9999] w-6 h-6 bg-red-600 rounded-full border-2 border-white shadow-[0_0_15px_rgba(255,0,0,0.8)]"
+           style="transform: translate(-50%, -50%); left: 50%; top: 50%;">
+      </div>
+
     </div>
   `,
   styles: [`
@@ -77,7 +80,7 @@ import { App } from '@capacitor/app';
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
   `]
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, OnDestroy {
   showSearch = false;
   showLibrary = false;
   searchQuery = '';
@@ -88,29 +91,44 @@ export class AppComponent implements OnInit {
   lastBackPressTime = 0;
   private readonly exitTimeWindow = 2000; 
 
+  // --- VARIABLES DEL PUNTERO ---
+  cursorX = window.innerWidth / 2;
+  cursorY = window.innerHeight / 2;
+  
+  // Variables para la aceleración
+  baseSpeed = 3;       // Velocidad inicial lenta para toques cortos
+  maxSpeed = 15;       // Velocidad máxima al mantener presionado
+  acceleration = 0.5;  // Cuánto aumenta la velocidad por cada frame
+  currentSpeed = 3;    // Velocidad actual en ejecución
+
+  keysPressed: { [key: string]: boolean } = {};
+  animationFrameId: number | null = null;
+
   constructor(
     private dataService: DataService, 
     private updaterService: UpdaterService,
     private router: Router, 
-    private location: Location, // Ya está importado correctamente arriba
+    private location: Location, 
     private zone: NgZone
   ) {}
 
   ngOnInit() {
     this.updaterService.updateAvailable$.subscribe(info => this.updateInfo = info);
-    // Chequear updates tras 5 seg
     setTimeout(() => this.updaterService.checkForUpdate(), 5000);
 
-    // Escucha GLOBAL del botón físico "Atrás"
     App.addListener('backButton', () => {
-        this.zone.run(() => {
-            this.handleBackButton();
-        });
+        this.zone.run(() => { this.handleBackButton(); });
     });
+
+    window.addEventListener('resize', this.centerCursor);
   }
 
-  // ... (Resto de métodos openSearch, onSearch, openLibrary, onInstallUpdate iguales) ...
+  ngOnDestroy() {
+    window.removeEventListener('resize', this.centerCursor);
+    this.stopLoop();
+  }
 
+  // --- LÓGICA ORIGINAL ---
   openSearch() {
     this.showSearch = true;
     this.showLibrary = false;
@@ -139,24 +157,10 @@ export class AppComponent implements OnInit {
   }
 
   handleBackButton() {
-    // 1. Si hay modal de búsqueda abierto, lo cerramos primero
-    if (this.showSearch) {
-        this.showSearch = false;
-        return;
-    }
+    if (this.showSearch) { this.showSearch = false; return; }
+    if (document.fullscreenElement) return; 
+    if (this.router.url !== '/home') { this.router.navigate(['/home']); return; }
 
-    // 2. Si hay fullscreen, no hacemos nada (VideoPlayer lo maneja)
-    if (document.fullscreenElement) {
-        return; 
-    }
-
-    // 3. Si no estamos en Home, volver
-    if (this.router.url !== '/home') {
-        this.router.navigate(['/home']);
-        return;
-    }
-
-    // 4. Salir de la App (Doble confirmación)
     const currentTime = new Date().getTime();
     if (currentTime - this.lastBackPressTime < this.exitTimeWindow) {
         App.exitApp();
@@ -168,8 +172,113 @@ export class AppComponent implements OnInit {
 
   showToast() {
       this.showExitToast = true;
-      setTimeout(() => {
-          this.showExitToast = false;
-      }, 2000);
+      setTimeout(() => { this.showExitToast = false; }, 2000);
+  }
+
+  // --- LÓGICA DEL PUNTERO VIRTUAL ---
+  centerCursor = () => {
+    this.cursorX = window.innerWidth / 2;
+    this.cursorY = window.innerHeight / 2;
+    this.updateCursorDOM();
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleKeyDown(event: KeyboardEvent) {
+    const key = event.key;
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(key)) {
+      event.preventDefault(); 
+      this.keysPressed[key] = true;
+      this.startLoop();
+    }
+    
+    if (key === 'Enter') {
+      event.preventDefault();
+      this.clickElementUnderCursor();
+    }
+  }
+
+  @HostListener('window:keyup', ['$event'])
+  handleKeyUp(event: KeyboardEvent) {
+    if (this.keysPressed[event.key]) {
+      this.keysPressed[event.key] = false;
+    }
+    if (!this.keysPressed['ArrowUp'] && !this.keysPressed['ArrowDown'] && 
+        !this.keysPressed['ArrowLeft'] && !this.keysPressed['ArrowRight']) {
+      this.stopLoop();
+    }
+  }
+
+  startLoop() {
+    if (this.animationFrameId === null) {
+      // Reiniciamos la velocidad al empezar a mover
+      this.currentSpeed = this.baseSpeed; 
+
+      const loop = () => {
+        let moved = false;
+        
+        // Aplicamos la velocidad actual
+        if (this.keysPressed['ArrowUp']) { this.cursorY = Math.max(0, this.cursorY - this.currentSpeed); moved = true; }
+        if (this.keysPressed['ArrowDown']) { this.cursorY = Math.min(window.innerHeight, this.cursorY + this.currentSpeed); moved = true; }
+        if (this.keysPressed['ArrowLeft']) { this.cursorX = Math.max(0, this.cursorX - this.currentSpeed); moved = true; }
+        if (this.keysPressed['ArrowRight']) { this.cursorX = Math.min(window.innerWidth, this.cursorX + this.currentSpeed); moved = true; }
+
+        if (moved) {
+          this.updateCursorDOM();
+          // Aceleramos para el siguiente frame, hasta llegar a maxSpeed
+          if (this.currentSpeed < this.maxSpeed) {
+              this.currentSpeed += this.acceleration;
+          }
+        }
+        
+        this.animationFrameId = requestAnimationFrame(loop);
+      };
+      this.animationFrameId = requestAnimationFrame(loop);
+    }
+  }
+
+  stopLoop() {
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+  }
+
+  updateCursorDOM() {
+    const cursor = document.getElementById('virtual-cursor');
+    if (cursor) {
+      cursor.style.left = `${this.cursorX}px`;
+      cursor.style.top = `${this.cursorY}px`;
+    }
+  }
+
+  clickElementUnderCursor() {
+    const cursor = document.getElementById('virtual-cursor');
+    if (cursor) {
+        cursor.style.display = 'none'; // Escondemos un milisegundo
+    }
+
+    // Obtenemos qué hay exactamente debajo del puntero
+    const element = document.elementFromPoint(this.cursorX, this.cursorY) as HTMLElement;
+
+    if (cursor) {
+        cursor.style.display = 'block'; // Lo volvemos a mostrar
+        
+        // EFECTO VISUAL DE CLIC: Hacemos que el puntero se encoja y vuelva a crecer
+        cursor.style.transform = 'translate(-50%, -50%) scale(0.5)';
+        setTimeout(() => cursor.style.transform = 'translate(-50%, -50%) scale(1)', 150);
+    }
+
+    if (element) {
+      // Buscamos si el elemento tocado está DENTRO de un botón, link o algo clickeable
+      const targetToClick = element.closest('button, a, input, [tabindex], .cursor-pointer') as HTMLElement || element;
+      
+      console.log("👆 Clic virtual ejecutado en:", targetToClick); 
+      
+      targetToClick.click();
+      
+      if (targetToClick.tagName === 'INPUT' || targetToClick.tagName === 'TEXTAREA') {
+        targetToClick.focus();
+      }
+    }
   }
 }

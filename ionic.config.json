@@ -1,0 +1,8 @@
+{
+  "name": "NetTv",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "angular-standalone",
+  "project": "Angular-App-Tv"
+}
