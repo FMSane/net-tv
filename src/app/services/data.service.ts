@@ -1,7 +1,6 @@
-import { Injectable } from '@angular/core';
 import { HttpClient } from '@angular/common/http';
+import { Injectable } from '@angular/core';
 import { BehaviorSubject, Observable, map, of, tap } from 'rxjs';
-import { environment} from '../../environments/environment';
 
 // --- 1. INTERFACES DEL BACKEND (Exactas a Go) ---
 export interface Source {
@@ -55,14 +54,12 @@ export interface MediaItem {
 
 @Injectable({ providedIn: 'root' })
 export class DataService {
-  private apiUrl = environment.apiUrl;
-
-  // Observables de estado
+  private apiUrl = 'https://net-tv-back.onrender.com/api';
+// Observables de estado
   public favChannels$ = new BehaviorSubject<MediaItem[]>([]);
   public history$ = new BehaviorSubject<MediaItem[]>([]);
   public watchlistMovies$ = new BehaviorSubject<MediaItem[]>([]);
   public watchlistSeries$ = new BehaviorSubject<MediaItem[]>([]);
-
   private readonly KEYS = {
     HISTORY: 'tv_app_history',
     FAV_CHANNELS: 'tv_app_fav_channels',
@@ -74,7 +71,6 @@ export class DataService {
   constructor(private http: HttpClient) {
     this.loadLocalData();
   }
-
   saveLastChannel(item: MediaItem) {
     localStorage.setItem(this.KEYS.LAST_CHANNEL, JSON.stringify(item));
   }
@@ -142,6 +138,7 @@ export class DataService {
     this.watchlistSeries$.next(this.load(this.KEYS.WATCHLIST_SERIES));
   }
 
+  // --- MÉTODOS DE LECTURA/ESCRITURA GENÉRICOS ---
   private load(key: string): MediaItem[] {
     const data = localStorage.getItem(key);
     return data ? JSON.parse(data) : [];
@@ -149,6 +146,7 @@ export class DataService {
 
   private save(key: string, data: MediaItem[]) {
     localStorage.setItem(key, JSON.stringify(data));
+    // Actualizar el Subject correspondiente
     switch(key) {
       case this.KEYS.FAV_CHANNELS: this.favChannels$.next(data); break;
       case this.KEYS.HISTORY: this.history$.next(data); break;
