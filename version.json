@@ -1,5 +1,6 @@
 {
-  "version": "0.0.1",
-  "url": "",
-  "changelog": "Versión inicial. Aún no hay APK disponible para descargar."
+  "versionCode": 2,
+  "versionName": "0.0.2",
+  "url": "https://github.com/tu-usuario/tu-repo/releases/download/v0.0.2/nettv-v0.0.2.apk",
+  "changelog": "Versión 2. Mejoras en la agenda."
 }
